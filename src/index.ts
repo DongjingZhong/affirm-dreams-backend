@@ -7,6 +7,7 @@ import profilesRoutes from "./routes/profiles";
 import meRouter from "./routes/me";
 import { mockAuth as authMiddleware } from "./middleware/mockAuth";
 import { registerCloudAffirmsRoutes } from "./routes/cloudAffirms";
+import accountRouter from "./routes/account";
 
 async function bootstrap() {
   console.log("🚀 Starting backend bootstrap...");
@@ -24,6 +25,7 @@ async function bootstrap() {
   // All /me and /profiles routes require mockAuth (x-user-id or Bearer token)
   app.use("/me", authMiddleware, meRouter);
   app.use("/profiles", authMiddleware, profilesRoutes);
+  app.use(accountRouter); // so DELETE /account is reachable
   registerCloudAffirmsRoutes(app);
 
   app.listen(PORT, () => {
