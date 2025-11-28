@@ -8,6 +8,9 @@ import meRouter from "./routes/me";
 import { mockAuth as authMiddleware } from "./middleware/mockAuth";
 import { registerCloudAffirmsRoutes } from "./routes/cloudAffirms";
 import accountRouter from "./routes/account";
+import billingRouter from "./routes/billing";
+import { clerkMiddleware } from "@clerk/express";
+import subscriptionRouter from "./routes/subscription";
 
 async function bootstrap() {
   console.log("🚀 Starting backend bootstrap...");
@@ -17,6 +20,8 @@ async function bootstrap() {
 
   app.use(cors());
   app.use(express.json());
+  app.use(clerkMiddleware());
+  app.use(subscriptionRouter);
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -26,6 +31,7 @@ async function bootstrap() {
   app.use("/me", authMiddleware, meRouter);
   app.use("/profiles", authMiddleware, profilesRoutes);
   app.use(accountRouter); // so DELETE /account is reachable
+  app.use(billingRouter);
   registerCloudAffirmsRoutes(app);
 
   app.listen(PORT, () => {
