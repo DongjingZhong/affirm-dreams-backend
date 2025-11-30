@@ -4,20 +4,39 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "@clerk/express";
 
+import { PaymentModel, type PaymentDocument } from "../models/Payment";
+
 const router = Router();
 
-// Legacy billing API that already returns payment history by userId.
-// Later you can replace this with a MongoDB query if you want.
-const LEGACY_BILLING_URL =
-  process.env.LEGACY_BILLING_URL ||
-  "https://rn5t3relei.execute-api.us-east-1.amazonaws.com/billing";
+/**
+ * Map productId into our plan type.
+ */
+function planFromProductId(
+  productId?: string
+): "free" | "monthly" | "yearly" | "lifetime" {
+  if (!productId) return "free";
+  if (productId.includes(".monthly")) return "monthly";
+  if (productId.includes(".yearly")) return "yearly";
+  if (productId.includes(".lifetime")) return "lifetime";
+  return "free";
+}
 
 /**
- * Get payment history for the CURRENT authenticated user.
- *
- * IMPORTANT:
- * - We NEVER read userId from query/body.
- * - We ALWAYS trust Clerk (req.auth.userId).
+ * Map provider into store value used by the mobile app.
+ */
+function storeFromProvider(
+  provider?: string
+): "apple" | "google" | "stripe" | "promo" | "test" | "other" {
+  if (provider === "app_store") return "apple";
+  if (provider === "google_play") return "google";
+  if (provider === "stripe") return "stripe";
+  if (provider === "promo") return "promo";
+  return "other";
+}
+
+/**
+ * Get payment history for the CURRENT authenticated user
+ * directly from MongoDB `Payment` collection.
  */
 router.get(
   "/billing/history",
@@ -30,30 +49,41 @@ router.get(
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const url = `${LEGACY_BILLING_URL}?userId=${encodeURIComponent(userId)}`;
-
     try {
-      console.log("[GET /billing/history] Fetching for user:", userId);
+      console.log(
+        "[GET /billing/history] Loading from Mongo for user:",
+        userId
+      );
 
-      const upstream = await fetch(url);
+      const docs = await PaymentModel.find({ userId })
+        .sort({ purchasedAt: -1 })
+        .lean<PaymentDocument[]>()
+        .exec();
 
-      if (!upstream.ok) {
-        const text = await upstream.text().catch(() => "");
-        console.error(
-          "[GET /billing/history] Upstream failed:",
-          upstream.status,
-          text
-        );
-        return res
-          .status(502)
-          .json({ error: "Upstream billing service failed" });
-      }
+      const items = docs.map((doc) => {
+        const plan = planFromProductId(doc.productId);
+        const store = storeFromProvider(doc.provider);
 
-      const json = await upstream.json();
+        return {
+          id: (doc as any)._id.toString(),
+          userId: doc.userId,
+          plan,
+          amount: (doc.amountCents ?? 0) / 100, // cents -> dollars
+          currency: doc.currency ?? "USD",
+          platform: (doc.platform ?? "web") as
+            | "ios"
+            | "android"
+            | "web"
+            | "unknown",
+          store,
+          storeTransactionId: doc.transactionId ?? null,
+          purchasedAt: new Date(doc.purchasedAt).getTime(),
+          expiresAt: doc.expiresAt ? new Date(doc.expiresAt).getTime() : null,
+          status: "paid" as const,
+        };
+      });
 
-      // Return whatever the legacy billing service returns.
-      // Typically: { items: PaymentRecord[] }
-      return res.json(json);
+      return res.json({ items });
     } catch (err) {
       console.error("[GET /billing/history] Error:", err);
       return res.status(500).json({ error: "Failed to load payment history" });
