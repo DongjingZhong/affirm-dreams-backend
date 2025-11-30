@@ -15,7 +15,6 @@ export interface IUser extends Document {
   primaryEmail?: string;
 
   name?: string;
-  username?: string;
   birthday?: Date;
   avatarUri?: string | null;
   avatarKey?: string | null;
@@ -64,7 +63,6 @@ const UserSchema = new Schema<IUser>(
     primaryEmail: { type: String },
 
     name: { type: String },
-    username: { type: String },
     birthday: { type: Date },
     avatarUri: { type: String, default: null }, // public URL
     avatarKey: { type: String, default: null }, // S3 key, optional

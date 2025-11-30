@@ -16,7 +16,6 @@ function toProfileDto(user: any) {
     return {
       avatarUri: null,
       name: "",
-      username: "",
       birthday: "2000-01-01",
       createdAt: Date.now(),
     };
@@ -32,7 +31,6 @@ function toProfileDto(user: any) {
   return {
     avatarUri: user.avatarUri ?? null,
     name: user.name ?? "",
-    username: user.username ?? "",
     birthday: birthdayStr,
     createdAt: user.createdAt ? new Date(user.createdAt).getTime() : Date.now(),
   };
@@ -66,7 +64,7 @@ router.get("/me", async (req: Request, res: Response) => {
     }
 
     const profile = toProfileDto(user);
-    const profileCompleted = Boolean(user.name && user.username);
+    const profileCompleted = Boolean(user.name);
 
     res.json({
       profile,
@@ -94,11 +92,10 @@ router.put("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name, username, birthday, avatarUri, createdAt } = req.body ?? {};
+    const { name, birthday, avatarUri, createdAt } = req.body ?? {};
 
     const update: any = {
       name,
-      username,
       avatarUri: avatarUri ?? null,
     };
 
@@ -120,7 +117,7 @@ router.put("/", async (req: Request, res: Response) => {
     );
 
     const profile = toProfileDto(user);
-    const profileCompleted = Boolean(user?.name && user?.username);
+    const profileCompleted = Boolean(user?.name);
 
     res.json({ profile, profileCompleted });
   } catch (err) {

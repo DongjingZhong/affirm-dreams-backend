@@ -40,7 +40,7 @@ export function registerCloudAffirmsRoutes(app: Application) {
         hasVideo: !!doc.video,
         hasAudio: !!doc.audio,
         imageCount: doc.images?.length ?? 0,
-        remoteImageKeys: (doc.images || []).map((img) => img.key),
+        remoteImageKeys: (doc.images || []).map((img: any) => img.key),
         remoteVideoKey: doc.video?.key ?? null,
         remoteAudioKey: doc.audio?.key ?? null,
       }));
@@ -100,4 +100,39 @@ export function registerCloudAffirmsRoutes(app: Application) {
       return res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Delete a single cloud affirm for a user (used when Pro users delete an item)
+  app.post(
+    "/cloud/affirms/delete",
+    async (req: Request, res: Response): Promise<Response> => {
+      try {
+        const { userId, id } = req.body as {
+          userId?: string;
+          id?: string;
+        };
+
+        // We require an explicit userId and clientId from the mobile app
+        if (!userId || !id) {
+          return res
+            .status(400)
+            .json({ error: "Missing userId or id (clientId)" });
+        }
+
+        // Delete by (userId + clientId) to avoid touching other users' data
+        const result = await AffirmationModel.deleteOne({
+          userId,
+          clientId: id,
+        });
+
+        // It is safe to return ok even if nothing was deleted (already gone)
+        return res.json({
+          ok: true,
+          deletedCount: (result as any).deletedCount ?? 0,
+        });
+      } catch (err) {
+        console.error("POST /cloud/affirms/delete error:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  );
 }
