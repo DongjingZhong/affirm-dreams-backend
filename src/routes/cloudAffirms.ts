@@ -1,8 +1,10 @@
 // src/routes/cloudAffirms.ts
 // All comments in English only.
 
+import { Types } from "mongoose";
 import type { Application, Request, Response } from "express";
 import { AffirmationModel } from "../models/Affirmation";
+import { S3Client, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 
 type RemoteAffirmationMeta = {
   id: string; // clientId from mobile app
@@ -17,11 +19,17 @@ type RemoteAffirmationMeta = {
   remoteAudioKey?: string | null;
 };
 
+/* ---------- S3 client ---------- */
+const S3_REGION =
+  process.env.AWS_S3_REGION ?? process.env.AWS_REGION ?? "us-east-1";
+const S3_BUCKET = process.env.AWS_S3_BUCKET ?? ""; // ⚠️ set in .env
+
+const s3 = new S3Client({ region: S3_REGION });
+
 export function registerCloudAffirmsRoutes(app: Application) {
   // List all cloud affirms for a user
   app.get("/cloud/affirms", async (req: Request, res: Response) => {
     try {
-      // For now we use a simple userId. Later we can read from auth.
       const userId = (req.query.userId as string | undefined) || "demo-user";
 
       const docs = await AffirmationModel.find({
@@ -31,8 +39,7 @@ export function registerCloudAffirmsRoutes(app: Application) {
         .sort({ createdAt: 1 })
         .lean();
 
-      const metas: RemoteAffirmationMeta[] = docs.map((doc) => ({
-        // Return the clientId so mobile can use it as `id`
+      const metas: RemoteAffirmationMeta[] = docs.map((doc: any) => ({
         id: doc.clientId,
         createdAt: doc.createdAt ? doc.createdAt.getTime() : Date.now(),
         updatedAt: doc.updatedAt ? doc.updatedAt.getTime() : undefined,
@@ -44,6 +51,13 @@ export function registerCloudAffirmsRoutes(app: Application) {
         remoteVideoKey: doc.video?.key ?? null,
         remoteAudioKey: doc.audio?.key ?? null,
       }));
+
+      console.log(
+        "GET /cloud/affirms userId =",
+        userId,
+        "docs count =",
+        docs.length
+      );
 
       return res.json(metas);
     } catch (err) {
@@ -59,6 +73,8 @@ export function registerCloudAffirmsRoutes(app: Application) {
         userId?: string;
         items?: RemoteAffirmationMeta[];
       };
+
+      console.log("POST /cloud/affirms/save body =", JSON.stringify(req.body));
 
       if (!userId) {
         return res.status(400).json({ error: "Missing userId" });
@@ -94,6 +110,13 @@ export function registerCloudAffirmsRoutes(app: Application) {
 
       await AffirmationModel.bulkWrite(ops);
 
+      console.log(
+        "POST /cloud/affirms/save upserted",
+        items.length,
+        "items for userId =",
+        userId
+      );
+
       return res.json({ ok: true, count: items.length });
     } catch (err) {
       console.error("POST /cloud/affirms/save error:", err);
@@ -106,28 +129,145 @@ export function registerCloudAffirmsRoutes(app: Application) {
     "/cloud/affirms/delete",
     async (req: Request, res: Response): Promise<Response> => {
       try {
-        const { userId, id } = req.body as {
+        console.log(
+          "POST /cloud/affirms/delete body =",
+          JSON.stringify(req.body)
+        );
+
+        const { userId, clientId, remoteId, ids } = req.body as {
           userId?: string;
-          id?: string;
+          clientId?: string; // local/client id from mobile
+          remoteId?: string; // Mongo _id (if mobile knows it)
+          ids?: string[]; // optional legacy array
         };
 
-        // We require an explicit userId and clientId from the mobile app
-        if (!userId || !id) {
-          return res
-            .status(400)
-            .json({ error: "Missing userId or id (clientId)" });
+        if (!userId) {
+          return res.status(400).json({ error: "Missing userId" });
         }
 
-        // Delete by (userId + clientId) to avoid touching other users' data
-        const result = await AffirmationModel.deleteOne({
-          userId,
-          clientId: id,
-        });
+        // Collect all identifiers into a unique list
+        const allIdSet = new Set<string>();
+        if (remoteId) allIdSet.add(String(remoteId));
+        if (clientId) allIdSet.add(String(clientId));
+        if (Array.isArray(ids)) {
+          ids.filter(Boolean).forEach((v) => allIdSet.add(String(v)));
+        }
 
-        // It is safe to return ok even if nothing was deleted (already gone)
+        const allIds = Array.from(allIdSet);
+
+        if (allIds.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "Missing clientId / remoteId / ids" });
+        }
+
+        let deletedCount = 0;
+        const mediaKeySet = new Set<string>();
+
+        // 1) For each id, find the doc (by _id or clientId), collect S3 keys, delete Mongo doc.
+        for (const value of allIds) {
+          let doc: any | null = null;
+
+          if (Types.ObjectId.isValid(value)) {
+            doc = await AffirmationModel.findOne({
+              _id: value,
+              userId,
+            }).lean();
+          }
+
+          if (!doc) {
+            doc = await AffirmationModel.findOne({
+              clientId: value,
+              userId,
+            }).lean();
+          }
+
+          if (!doc) {
+            console.log(
+              "POST /cloud/affirms/delete no document found for value =",
+              value
+            );
+            continue;
+          }
+
+          // Collect S3 keys
+          (doc.images || []).forEach((img: any) => {
+            if (img?.key) mediaKeySet.add(String(img.key));
+          });
+          if (doc.audio?.key) mediaKeySet.add(String(doc.audio.key));
+          if (doc.video?.key) mediaKeySet.add(String(doc.video.key));
+
+          // Delete the document itself
+          const delRes = await AffirmationModel.deleteOne({
+            _id: doc._id,
+            userId,
+          });
+
+          if ((delRes as any).deletedCount) {
+            deletedCount += (delRes as any).deletedCount ?? 0;
+            console.log(
+              "POST /cloud/affirms/delete deleted Mongo doc _id =",
+              String(doc._id),
+              "clientId =",
+              doc.clientId
+            );
+          }
+        }
+
+        // 2) Delete media files from S3
+        if (!S3_BUCKET) {
+          console.warn(
+            "POST /cloud/affirms/delete S3_BUCKET not set, skip S3 deletion."
+          );
+        } else if (mediaKeySet.size > 0) {
+          const objects = Array.from(mediaKeySet).map((Key) => ({ Key }));
+
+          const params = {
+            Bucket: S3_BUCKET,
+            Delete: {
+              Objects: objects,
+              Quiet: true,
+            },
+          };
+
+          console.log(
+            "POST /cloud/affirms/delete S3 deleteObjects params =",
+            JSON.stringify({
+              bucket: S3_BUCKET,
+              keys: Array.from(mediaKeySet),
+            })
+          );
+
+          try {
+            await s3.send(new DeleteObjectsCommand(params));
+            console.log(
+              "POST /cloud/affirms/delete S3 deleteObjects success, keys count =",
+              mediaKeySet.size
+            );
+          } catch (err) {
+            console.error("POST /cloud/affirms/delete S3 delete error:", err);
+          }
+        } else {
+          console.log(
+            "POST /cloud/affirms/delete no media keys collected, skip S3 delete."
+          );
+        }
+
+        console.log(
+          "POST /cloud/affirms/delete userId =",
+          userId,
+          "ids =",
+          allIds,
+          "deletedCount =",
+          deletedCount,
+          "mediaKeys =",
+          Array.from(mediaKeySet)
+        );
+
         return res.json({
           ok: true,
-          deletedCount: (result as any).deletedCount ?? 0,
+          deleted: deletedCount,
+          total: allIds.length,
         });
       } catch (err) {
         console.error("POST /cloud/affirms/delete error:", err);
