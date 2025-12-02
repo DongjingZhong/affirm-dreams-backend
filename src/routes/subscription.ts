@@ -16,7 +16,8 @@ const router = Router();
 
 /**
  * Shape returned to the mobile app.
- * This mirrors the Subscription type in app/pricing/index.tsx.
+ * This mirrors the Subscription type used in the mobile app.
+ * It is the single source of truth for the current subscription status.
  */
 type ClientSubscription = {
   plan: Plan;
@@ -59,7 +60,12 @@ function getUserId(req: Request): string | null {
 }
 
 /* ------------ GET /subscription (current user) ------------ */
-
+/**
+ * This endpoint is used by the mobile app on login:
+ * - syncSubscriptionOnLogin(token) calls this route
+ * - The response is cached in AsyncStorage("subscription")
+ * - UI components (TopBar, AffirmDetail, etc.) rely on that cache
+ */
 router.get(
   "/subscription",
   requireAuth(),

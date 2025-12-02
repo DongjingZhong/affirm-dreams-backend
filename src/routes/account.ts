@@ -29,7 +29,6 @@ async function deleteAllUserData(userId: string): Promise<void> {
  *
  * IMPORTANT:
  * - Never accept userId from body/query.
- * - Always trust userId from Clerk auth (req.auth.userId).
  */
 router.delete(
   "/account",
