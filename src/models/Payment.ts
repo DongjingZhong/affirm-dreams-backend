@@ -26,7 +26,8 @@ const paymentSchema = new Schema<PaymentDocument>(
     provider: { type: String, required: true },
     productId: { type: String, required: true },
     transactionId: { type: String, required: true, unique: true },
-    originalTransactionId: { type: String },
+    originalTransactionId: { type: String, index: true },
+
     amountCents: { type: Number, required: true },
     currency: { type: String, required: true },
     purchasedAt: { type: Date, required: true },

@@ -11,6 +11,7 @@ import accountRouter from "./routes/account";
 import billingRouter from "./routes/billing";
 import { clerkMiddleware } from "@clerk/express";
 import subscriptionRouter from "./routes/subscription";
+import revenuecatWebhookRouter from "./routes/revenuecatWebhook";
 
 async function bootstrap() {
   console.log("🚀 Starting backend bootstrap...");
@@ -22,6 +23,7 @@ async function bootstrap() {
   app.use(express.json());
   app.use(clerkMiddleware());
   app.use(subscriptionRouter);
+  app.use(revenuecatWebhookRouter);
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
