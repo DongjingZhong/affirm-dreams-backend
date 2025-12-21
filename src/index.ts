@@ -12,12 +12,15 @@ import billingRouter from "./routes/billing";
 import { clerkMiddleware } from "@clerk/express";
 import subscriptionRouter from "./routes/subscription";
 import revenuecatWebhookRouter from "./routes/revenuecatWebhook";
+import path from "path";
 
 async function bootstrap() {
   console.log("🚀 Starting backend bootstrap...");
   await connectDatabase();
 
   const app = express();
+  const publicDir = path.resolve(__dirname, "../public");
+  app.use(express.static(publicDir));
 
   app.use(cors());
   app.use(express.json());
