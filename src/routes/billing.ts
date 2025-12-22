@@ -27,10 +27,13 @@ function planFromProductId(
 function storeFromProvider(
   provider?: string
 ): "apple" | "google" | "stripe" | "promo" | "test" | "other" {
-  if (provider === "app_store") return "apple";
-  if (provider === "google_play") return "google";
-  if (provider === "stripe") return "stripe";
-  if (provider === "promo") return "promo";
+  const p = String(provider || "").toLowerCase();
+
+  if (p === "app_store" || p.includes("apple")) return "apple";
+  if (p === "google_play" || p.includes("google")) return "google";
+  if (p.includes("stripe")) return "stripe";
+  if (p.includes("promo")) return "promo";
+
   return "other";
 }
 
@@ -68,7 +71,7 @@ router.get(
           id: (doc as any)._id.toString(),
           userId: doc.userId,
           plan,
-          amount: (doc.amountCents ?? 0) / 100, // cents -> dollars
+          amount: (doc.amountCents ?? 0) / 100,
           currency: doc.currency ?? "USD",
           platform: (doc.platform ?? "web") as
             | "ios"
